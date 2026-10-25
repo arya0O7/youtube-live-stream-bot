@@ -24,12 +24,21 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 import chromedriver_autoinstaller
 from selenium.webdriver.common.keys import Keys
 
+import logging
+import urllib3
+
+# Suppress SSL warnings and connection pool retries on shutdown
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+logging.getLogger("urllib3.util.retry").setLevel(logging.ERROR)
+logging.getLogger("selenium.webdriver.remote.remote_connection").setLevel(logging.ERROR)
+
 init(autoreset=True)
 
 # Diccionarios de idiomas
 LANGUAGES = {
     'en': {
-        'intro': """
+        'intro': r"""
   _/|       |\_
  /  |       |  \ 
 |    \     /    |
@@ -77,7 +86,7 @@ LANGUAGES = {
         'error_scraping': "Error scraping {}: {}"
     },
     'es': {
-        'intro': """
+        'intro': r"""
   _/|       |\_
  /  |       |  \ 
 |    \     /    |
@@ -135,6 +144,7 @@ class ProxyManager:
         self.working_proxies = []
         self.lock = threading.Lock()
         self.proxy_timeout = 10
+        self.running = True
         self.required_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -150,13 +160,21 @@ class ProxyManager:
         
     def verify_proxy(self, proxy):
         try:
-            # Verificar si es un proxy IPv4 válido
-            if not re.match(r'^(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}$', proxy):
+            if not proxy:
                 return False
+            clean = proxy.strip()
+            if clean.lower() == 'direct':
+                return True
+
+            # Formatear dirección para requests
+            if not clean.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
+                proxy_url = f'http://{clean}'
+            else:
+                proxy_url = clean
 
             proxy_dict = {
-                'http': f'http://{proxy}',
-                'https': f'http://{proxy}'
+                'http': proxy_url,
+                'https': proxy_url
             }
             
             # Primera verificación con ip-api.com
@@ -164,7 +182,7 @@ class ProxyManager:
                 response = requests.get(
                     'http://ip-api.com/json',
                     proxies=proxy_dict,
-                    timeout=5,
+                    timeout=3,
                     verify=False,
                     headers=self.required_headers
                 )
@@ -180,7 +198,7 @@ class ProxyManager:
                 response = requests.get(
                     'https://www.youtube.com',
                     proxies=proxy_dict,
-                    timeout=5,
+                    timeout=3,
                     verify=False,
                     headers=self.required_headers,
                     allow_redirects=True
@@ -247,8 +265,12 @@ class ProxyManager:
             print(f"{Fore.RED}{LANGUAGES[lang]['error_scraping'].format(url, str(e))}")
         return []
             
-    def load_proxies_from_file(self, filename, lang='es', max_proxies=None):
+    def stop(self):
+        self.running = False
+
+    def load_proxies_from_file(self, filename, lang='es', max_proxies=None, progress_callback=None):
         try:
+            self.running = True
             if filename == "sitios.txt":
                 print(f"{Fore.YELLOW}{LANGUAGES[lang]['scraping_url']}")
                 with open(filename, "r") as f:
@@ -256,13 +278,15 @@ class ProxyManager:
                 
                 if not urls:
                     print(f"{Fore.RED}{LANGUAGES[lang]['error_file_not_found'].format(filename)}")
+                    if progress_callback:
+                        progress_callback(f"sitios.txt is empty", "error")
                     return False
                 
                 working_proxies = 0
                 current_url_index = 0
-                batch_size = 100  # Aumentar el tamaño del lote
+                batch_size = 80
                 
-                while working_proxies < max_proxies and current_url_index < len(urls):
+                while self.running and working_proxies < max_proxies and current_url_index < len(urls):
                     url = urls[current_url_index]
                     print(f"{Fore.YELLOW}{LANGUAGES[lang]['scraping_url'].format(url)}")
                     
@@ -270,21 +294,29 @@ class ProxyManager:
                     proxies = self.scrape_proxies_from_url(url, batch_size)
                     print(f"{Fore.GREEN}{LANGUAGES[lang]['found_proxies'].format(len(proxies), url)}")
                     
+                    if progress_callback:
+                        progress_callback(f"🌐 Scraped {len(proxies)} candidate proxies from source [{current_url_index + 1}/{len(urls)}]...", "info")
+                    
                     if not proxies:
                         current_url_index += 1
                         continue
                     
-                    # Verificar los proxies en paralelo
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:  # Aumentar workers
+                    # Verificar los proxies en paralelo con 50 workers
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
                         future_to_proxy = {executor.submit(self.verify_proxy, proxy): proxy for proxy in proxies}
                         
                         for future in concurrent.futures.as_completed(future_to_proxy):
+                            if not self.running:
+                                executor.shutdown(wait=False, cancel_futures=True)
+                                break
                             proxy = future_to_proxy[future]
                             try:
                                 if future.result():
                                     self.proxies.append(proxy)
                                     working_proxies += 1
                                     print(f"{Fore.GREEN}{LANGUAGES[lang]['proxy_verified'].format(proxy)}")
+                                    if progress_callback:
+                                        progress_callback(f"✅ Verified working proxy: {proxy} ({working_proxies}/{max_proxies})", "success")
                                     
                                     if working_proxies >= max_proxies:
                                         break
@@ -297,9 +329,13 @@ class ProxyManager:
                 
                 if not self.proxies:
                     print(f"{Fore.RED}{LANGUAGES[lang]['no_working_proxies']}")
+                    if progress_callback:
+                        progress_callback("❌ No live proxies could be verified from public sources.", "error")
                     return False
                     
                 print(f"{Fore.GREEN}{LANGUAGES[lang]['loaded_proxies'].format(len(self.proxies), filename)}")
+                if progress_callback:
+                    progress_callback(f"🎉 Successfully verified {len(self.proxies)} proxies! Starting sessions...", "success")
             else:
                 with open(filename, "r") as f:
                     self.proxies = [line.strip() for line in f if line.strip()]
@@ -350,9 +386,36 @@ class YouTubeBot:
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
         ]
+        self.headless = False
+        self.active_drivers = set()
+
+    def stop(self):
+        self.running = False
+        if hasattr(self, 'proxy_manager') and self.proxy_manager:
+            try:
+                self.proxy_manager.stop()
+            except Exception:
+                pass
+        with self.lock:
+            drivers = list(self.active_drivers)
+            self.active_drivers.clear()
+        for d in drivers:
+            try:
+                d.quit()
+            except Exception:
+                pass
 
     def set_token(self, token):
-        self.token = token
+        if not token:
+            self.token = 'dQw4w9WgXcQ'
+            return
+        token = token.strip()
+        # Extraer ID de YouTube de 11 caracteres si se pegó una URL completa
+        match = re.search(r'(?:v=|\/|be\/|shorts\/)([a-zA-Z0-9_-]{11})', token)
+        if match:
+            self.token = match.group(1)
+        else:
+            self.token = token
 
     def set_session_duration(self, duration):
         self.session_duration = duration
@@ -408,8 +471,11 @@ class YouTubeBot:
             options.add_argument('--ignore-certificate-errors')
             options.add_argument('--ignore-ssl-errors')
             options.add_argument('--disable-features=IsolateOrigins,site-per-process')
-            options.add_argument('--disable-site-isolation-trials')
-            options.add_argument(f'--proxy-server={proxy}')
+            if proxy and str(proxy).strip().lower() != 'direct':
+                clean_p = str(proxy).strip()
+                if not clean_p.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
+                    clean_p = f'http://{clean_p}'
+                options.add_argument(f'--proxy-server={clean_p}')
             
             # Agregar más argumentos para evadir la detección
             options.add_argument('--disable-blink-features')
@@ -449,9 +515,12 @@ class YouTubeBot:
                 'profile.default_content_setting_values.durable_storage': 1,
                 'profile.default_content_setting_values.autoplay': 1,
             }
-            options.add_experimental_option('prefs', prefs)
-            
+            if getattr(self, 'headless', False):
+                options.add_argument('--headless=new')
+
             driver = webdriver.Chrome(options=options)
+            with self.lock:
+                self.active_drivers.add(driver)
             
             # Modificar el navigator.webdriver
             driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
@@ -542,6 +611,8 @@ class YouTubeBot:
                     with self.lock:
                         self.printing.append(f"{Fore.RED}[-] Error: {str(e)}")
                 finally:
+                    with self.lock:
+                        self.active_drivers.discard(driver)
                     try:
                         driver.quit()
                     except:
@@ -692,7 +763,56 @@ class YouTubeBot:
             pass
 
 def main():
-    # Selección de idioma
+    import sys
+    import argparse
+
+    parser = argparse.ArgumentParser(description="YouTube Livestream Bot - Phoenix Edition")
+    parser.add_argument("--stream", "-s", type=str, default=None, help="YouTube video or stream ID/URL (e.g. 1_dkLerqKaY)")
+    parser.add_argument("--windows", "-w", type=int, default=None, help="Number of concurrent Chrome windows")
+    parser.add_argument("--duration", "-d", type=int, default=0, help="Session duration in seconds (0 = indefinite)")
+    parser.add_argument("--proxies", "-p", type=str, default=None, help="Proxy source: 'proxys.txt', 'sitios.txt', or 'direct'")
+    parser.add_argument("--scrape", type=int, default=0, help="Number of proxies to scrape from sitios.txt")
+    parser.add_argument("--lang", choices=['en', 'es'], default='en', help="Language (en/es)")
+    args = parser.parse_args()
+
+    # Si se pasó --stream por línea de comandos, ejecutar directo sin preguntas
+    if args.stream:
+        lang = args.lang
+        print(LANGUAGES[lang]['intro'])
+        bot = YouTubeBot(lang)
+        bot.set_token(args.stream)
+        bot.set_session_duration(args.duration)
+        bot.max_windows = args.windows or 3
+
+        if args.proxies == 'direct':
+            bot.proxy_manager.proxies = ['direct']
+        elif args.scrape > 0 or args.proxies == 'sitios.txt':
+            scrape_count = args.scrape or 500
+            print(f"{Fore.CYAN}[*] Scraping up to {scrape_count} proxies from sitios.txt...")
+            if not bot.proxy_manager.load_proxies_from_file("sitios.txt", lang, scrape_count):
+                return
+        elif args.proxies and os.path.exists(args.proxies):
+            if not bot.proxy_manager.load_proxies_from_file(args.proxies, lang):
+                return
+        elif os.path.exists("proxys.txt") and os.path.getsize("proxys.txt") > 0:
+            bot.proxy_manager.load_proxies_from_file("proxys.txt", lang)
+        else:
+            bot.proxy_manager.proxies = ['direct']
+
+        threading.Thread(target=bot.print_status, daemon=True).start()
+        print(f"{Fore.GREEN}{LANGUAGES[lang]['starting_threads'].format(bot.max_windows)}")
+        for _ in range(bot.max_windows):
+            threading.Thread(target=bot.bot, daemon=True).start()
+
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            bot.running = False
+            print(f"\n{Fore.YELLOW}{LANGUAGES[lang]['stopping_bot']}")
+        return
+
+    # Modo interactivo original
     print("\nSelect language / Selecciona el idioma:")
     print("1. English")
     print("2. Español")

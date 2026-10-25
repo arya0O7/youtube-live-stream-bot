@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phoenix — YouTube Stream Bot Control Deck</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Header -->
+    <header class="navbar">
+      <div class="nav-brand">
+        <div class="brand-logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title">PHOENIX <span class="badge-edition">V1.5 WEB</span></div>
+          <div class="brand-sub">YouTube Multi-Window View & Stream Bot</div>
+        </div>
+      </div>
+
+      <!-- Live Status Pill in Header -->
+      <div class="header-status-group">
+        <div class="status-pill" id="globalStatusPill">
+          <span class="status-indicator-dot idle" id="globalStatusDot"></span>
+          <span class="status-label" id="globalStatusText">STANDBY — IDLE</span>
+        </div>
+
+        <div class="telemetry-chip">
+          <span class="chip-label">CPU:</span>
+          <span class="chip-val" id="cpuStat">0%</span>
+        </div>
+
+        <div class="telemetry-chip">
+          <span class="chip-label">RAM:</span>
+          <span class="chip-val" id="ramStat">0 MB</span>
+        </div>
+
+        <div class="telemetry-chip">
+          <span class="chip-label">ACTIVE:</span>
+          <span class="chip-val highlight" id="activeStat">0 / 0</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main 2-Column Dashboard Grid -->
+    <main class="dashboard-grid">
+      <!-- Left Column: Controls & Configuration -->
+      <section class="panel-left">
+        <!-- Card 1: Target Stream -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              Target Stream / Video
+            </div>
+            <span class="badge-subtle">Auto-Parses ID</span>
+          </div>
+
+          <div class="input-row">
+            <div class="input-wrapper">
+              <input 
+                type="text" 
+                id="streamInput" 
+                class="form-input" 
+                placeholder="Paste YouTube Stream URL or Video ID (e.g. https://youtube.com/watch?v=...)"
+                value=""
+              />
+              <button id="pasteBtn" class="input-btn" title="Paste from clipboard">Paste</button>
+              <button id="clearBtn" class="input-btn" title="Clear input">✕</button>
+            </div>
+          </div>
+
+          <!-- Video Preview Box (Hidden until URL or ID is entered) -->
+          <div class="video-preview-card" id="videoPreviewCard" style="display: none;">
+            <div class="thumbnail-wrapper">
+              <img id="videoThumb" src="" alt="Video Thumbnail" />
+              <div class="thumb-overlay">
+                <div class="play-icon">▶</div>
+              </div>
+            </div>
+            <div class="preview-info">
+              <div class="preview-badge" id="previewBadge">ID: </div>
+              <div class="preview-title" id="previewTitle">YouTube Stream Loaded</div>
+              <a id="watchLink" href="#" target="_blank" class="watch-link">
+                Open in YouTube ↗
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 2: Concurrency & Windows -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+              </svg>
+              Concurrent Windows
+            </div>
+            <div class="slider-display" id="windowsDisplay">10 Windows</div>
+          </div>
+
+          <div class="slider-container">
+            <input 
+              type="range" 
+              id="windowsRange" 
+              class="form-range" 
+              min="1" 
+              max="30" 
+              value="10" 
+            />
+            <div class="presets-row">
+              <button class="preset-btn" data-val="1">1x</button>
+              <button class="preset-btn" data-val="3">3x</button>
+              <button class="preset-btn" data-val="5">5x</button>
+              <button class="preset-btn active" data-val="10">10x</button>
+              <button class="preset-btn" data-val="15">15x</button>
+              <button class="preset-btn" data-val="20">20x</button>
+              <button class="preset-btn" data-val="30">30x</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 3: Network & Proxies -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+              </svg>
+              Network & Proxy Mode
+            </div>
+          </div>
+
+          <!-- Proxy Mode Tabs -->
+          <div class="mode-tabs">
+            <button class="mode-tab active" data-mode="direct">
+              <span class="mode-icon">⚡</span>
+              <div class="mode-info">
+                <strong>Direct Connection</strong>
+                <span>Session isolated (100% reliable)</span>
+              </div>
+            </button>
+            <button class="mode-tab" data-mode="scrape">
+              <span class="mode-icon">🌐</span>
+              <div class="mode-info">
+                <strong>Auto-Scrape Proxies</strong>
+                <span>118 sites verified vs YouTube</span>
+              </div>
+            </button>
+            <button class="mode-tab" data-mode="custom">
+              <span class="mode-icon">📋</span>
+              <div class="mode-info">
+                <strong>Custom Proxies</strong>
+                <span>Paste Webshare / dedicated IPs</span>
+              </div>
+            </button>
+          </div>
+
+          <!-- Custom Proxy Input Drawer -->
+          <div class="drawer" id="customProxyDrawer" style="display: none;">
+            <div class="drawer-header">
+              <span>Paste proxies (1 per line, format: IP:PORT or user:pass@IP:PORT)</span>
+              <span class="line-count-badge" id="customProxyCount">0 Proxies</span>
+            </div>
+            <textarea 
+              id="customProxiesText" 
+              class="form-textarea" 
+              rows="4" 
+              placeholder="185.199.229.156:8080&#10;http://user:pass@p.webshare.io:80"
+            ></textarea>
+          </div>
+
+          <!-- Scrape Amount Drawer -->
+          <div class="drawer" id="scrapeDrawer" style="display: none;">
+            <div class="drawer-row">
+              <label for="scrapeAmount">Verified Proxies Target:</label>
+              <select id="scrapeAmount" class="form-select">
+                <option value="15" selected>15 Proxies (Fast Start — Recommended)</option>
+                <option value="30">30 Proxies (Balanced)</option>
+                <option value="50">50 Proxies (Multi-Window)</option>
+                <option value="100">100 Proxies (Deep Scrape)</option>
+              </select>
+            </div>
+            <div class="field-hint" style="margin-top: 6px; font-size: 0.75rem; color: var(--text-muted);">
+              ⚡ Public proxies take ~20-40s to verify against YouTube. For 0-second instant start, choose <strong>Direct Connection</strong>.
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 4: Stealth & Runtime -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+              Execution Options
+            </div>
+          </div>
+
+          <div class="options-grid">
+            <label class="toggle-control">
+              <input type="checkbox" id="headlessToggle" />
+              <span class="toggle-track"></span>
+              <div class="toggle-label">
+                <strong>Headless Mode (Background)</strong>
+                <span>Run invisibly to save CPU & RAM</span>
+              </div>
+            </label>
+
+            <div class="duration-control">
+              <label class="duration-label">Session Duration:</label>
+              <select id="durationSelect" class="form-select">
+                <option value="0" selected>Indefinite (Until Stopped)</option>
+                <option value="900">15 Minutes</option>
+                <option value="1800">30 Minutes</option>
+                <option value="3600">1 Hour</option>
+                <option value="7200">2 Hours</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Master Launch Control -->
+        <div class="master-action-container">
+          <button id="masterActionBtn" class="btn-master start">
+            <span class="btn-icon">🚀</span>
+            <span class="btn-text">LAUNCH BOT NOW</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Right Column: Telemetry, Counters, Worker Radar & Live Console -->
+      <section class="panel-right">
+        <!-- Hero Metrics -->
+        <div class="hero-stats-row">
+          <div class="stat-card stat-botted">
+            <div class="stat-header">
+              <span class="stat-title">TOTAL VIEWS DELIVERED</span>
+              <span class="stat-tag">BOTTED</span>
+            </div>
+            <div class="stat-value" id="bottedCounter">0</div>
+            <div class="stat-sub">Automated stream interaction cycles</div>
+          </div>
+
+          <div class="stat-card stat-windows">
+            <div class="stat-header">
+              <span class="stat-title">ACTIVE BROWSERS</span>
+              <span class="stat-tag">PARALLEL</span>
+            </div>
+            <div class="stat-value" id="activeWindowsCount">0 / 10</div>
+            <div class="stat-sub">Isolated Chrome sessions</div>
+          </div>
+
+          <div class="stat-card stat-uptime">
+            <div class="stat-header">
+              <span class="stat-title">SESSION RUNTIME</span>
+              <span class="stat-tag">TIMER</span>
+            </div>
+            <div class="stat-value" id="uptimeCounter">00:00:00</div>
+            <div class="stat-sub" id="statusSubtitle">Ready to stream</div>
+          </div>
+        </div>
+
+        <!-- Live Terminal Stream -->
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <div class="terminal-title">
+              <span class="terminal-dot red"></span>
+              <span class="terminal-dot yellow"></span>
+              <span class="terminal-dot green"></span>
+              <span class="terminal-name">Phoenix Live Telemetry Console</span>
+            </div>
+            <div class="terminal-actions">
+              <label class="auto-scroll-toggle">
+                <input type="checkbox" id="autoScrollCheck" checked />
+                <span>Auto-Scroll</span>
+              </label>
+              <button id="clearLogsBtn" class="terminal-btn">Clear</button>
+            </div>
+          </div>
+
+          <div class="terminal-body" id="terminalOutput">
+            <div class="log-line info">
+              <span class="log-time">[00:00:00]</span>
+              <span class="log-tag">[SYSTEM]</span>
+              <span class="log-msg">Phoenix YouTube Livestream Bot UI connected and ready.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Workers Radar -->
+        <div class="radar-card">
+          <div class="radar-header">
+            <div class="radar-title">Active Worker Threads Radar</div>
+            <div class="radar-badge" id="radarBadge">0 Active Workers</div>
+          </div>
+          <div class="workers-grid" id="workersGrid">
+            <div class="workers-empty">Press <strong>Launch Bot Now</strong> to spawn browser workers</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

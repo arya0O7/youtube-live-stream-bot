@@ -40,4 +40,11 @@ chromedriver.exe
 
 # OS specific
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Cache and temporary files
+.parcel-cache/
+.archify/
+node_modules/
+dist/
+ 
