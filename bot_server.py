@@ -50,6 +50,8 @@ class BotController:
         self.logs = []
         self.log_counter = 0
         self.log_subscribers = []
+        self.benchmarked_proxies = []
+        self.benchmark_running = False
 
         self.add_log("System initialized. Phoenix YouTube Bot Control Deck ready.", "info")
 
@@ -247,6 +249,100 @@ class BotController:
         threading.Thread(target=_stopper, daemon=True).start()
         return True, "Stopping bot"
 
+    def start_proxy_benchmark(self, limit=15, source="sitios.txt"):
+        if self.benchmark_running:
+            return False, "Benchmark is already running"
+
+        self.benchmark_running = True
+        self.add_log(f"⚡ Launching high-speed proxy benchmark (target: {limit} live proxies)...", "info")
+
+        def _worker():
+            try:
+                from proxy_tester import ProxyTester
+                tester = ProxyTester(timeout=3.0)
+                candidates = []
+                if os.path.exists(source):
+                    if source == "sitios.txt":
+                        candidates = tester.scrape_from_sitios(source, max_sources=15)
+                    else:
+                        with open(source, "r") as f:
+                            candidates = [line.strip() for line in f if line.strip()]
+
+                if not candidates:
+                    candidates = tester.scrape_from_sitios("sitios.txt", max_sources=15)
+
+                self.add_log(f"Testing {len(candidates)} proxy candidates concurrently...", "info")
+
+                def _on_v(res, count, target):
+                    self.add_log(f"✔ Live Proxy: {res['proxy']} ({res['latency_ms']}ms, {res['grade']})", "success")
+
+                verified = tester.benchmark_list(candidates, max_workers=40, target_working=limit, progress_callback=_on_v)
+                with self.lock:
+                    self.benchmarked_proxies = verified
+                    self.benchmark_running = False
+
+                self.add_log(f"🎉 Proxy benchmark completed! {len(verified)} verified live proxies ready.", "success")
+                if verified:
+                    tester.save_verified("proxys.txt")
+            except Exception as e:
+                with self.lock:
+                    self.benchmark_running = False
+                self.add_log(f"Proxy benchmark error: {str(e)}", "danger")
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return True, "Benchmark initiated"
+
+def inspect_youtube_stream(video_id: str) -> dict:
+    info = {
+        "success": True,
+        "video_id": video_id,
+        "title": f"YouTube Video ({video_id})",
+        "author_name": "YouTube Creator",
+        "author_url": f"https://www.youtube.com/watch?v={video_id}",
+        "thumbnail_url": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+        "watch_url": f"https://www.youtube.com/watch?v={video_id}",
+        "is_live": False,
+        "views": None,
+        "live_viewers": None
+    }
+    # 1. Fetch official oEmbed data
+    try:
+        import urllib.request
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode())
+            info["title"] = data.get("title", info["title"])
+            info["author_name"] = data.get("author_name", info["author_name"])
+            info["author_url"] = data.get("author_url", info["author_url"])
+            if data.get("thumbnail_url"):
+                info["thumbnail_url"] = data.get("thumbnail_url")
+    except Exception:
+        pass
+
+    # 2. Check live status and public viewer counters
+    try:
+        import urllib.request
+        import re
+        watch_url = f"https://www.youtube.com/watch?v={video_id}"
+        req = urllib.request.Request(watch_url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+            info["is_live"] = ('isLiveBroadcast' in html) or ('"isLive":true' in html) or ('"liveStreamability"' in html)
+            view_match = re.search(r'"viewCount":\s*"(\d+)"', html)
+            if view_match:
+                info["views"] = int(view_match.group(1))
+            live_match = re.search(r'"concurrentViewers":\s*"(\d+)"', html)
+            if live_match:
+                info["live_viewers"] = int(live_match.group(1))
+    except Exception:
+        pass
+
+    return info
+
 controller = BotController()
 
 @app.route("/")
@@ -276,13 +372,34 @@ def api_video_info():
     video_id = match.group(1) if match else raw
     if not video_id:
         video_id = "dQw4w9WgXcQ"
+    return jsonify(inspect_youtube_stream(video_id))
 
-    return jsonify({
-        "success": True,
-        "video_id": video_id,
-        "thumbnail_url": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
-        "watch_url": f"https://www.youtube.com/watch?v={video_id}"
-    })
+@app.route("/api/stream/inspect", methods=["GET"])
+def api_stream_inspect():
+    raw = request.args.get("id", "").strip()
+    import re
+    match = re.search(r'(?:v=|\/|be\/|shorts\/)([a-zA-Z0-9_-]{11})', raw)
+    video_id = match.group(1) if match else raw
+    if not video_id:
+        video_id = "dQw4w9WgXcQ"
+    return jsonify(inspect_youtube_stream(video_id))
+
+@app.route("/api/proxy/benchmark", methods=["POST"])
+def api_proxy_benchmark():
+    data = request.get_json() or {}
+    limit = int(data.get("limit", 15))
+    source = data.get("source", "sitios.txt")
+    success, msg = controller.start_proxy_benchmark(limit=limit, source=source)
+    return jsonify({"success": success, "message": msg})
+
+@app.route("/api/proxy/table", methods=["GET"])
+def api_proxy_table():
+    with controller.lock:
+        return jsonify({
+            "proxies": controller.benchmarked_proxies,
+            "is_running": controller.benchmark_running,
+            "count": len(controller.benchmarked_proxies)
+        })
 
 @app.route("/api/logs/stream")
 def api_logs_stream():

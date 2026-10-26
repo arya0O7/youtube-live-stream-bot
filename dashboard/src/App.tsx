@@ -18,6 +18,8 @@ import {
   Server,
   RefreshCw,
   Activity,
+  Radio,
+  ArrowDownToLine,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,6 +30,14 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -41,6 +51,26 @@ interface LogEntry {
   time: string;
   text: string;
   level: "info" | "success" | "warning" | "danger" | "error";
+}
+
+interface StreamMetadata {
+  title: string;
+  author_name: string;
+  author_url: string;
+  thumbnail_url: string;
+  watch_url: string;
+  is_live: boolean;
+  views: number | null;
+  live_viewers: number | null;
+}
+
+interface BenchmarkedProxy {
+  proxy: string;
+  alive: boolean;
+  latency_ms: number;
+  status_code: number;
+  protocol: string;
+  grade: "Fast" | "Medium" | "Slow";
 }
 
 interface BotStatus {
@@ -89,6 +119,12 @@ export default function App() {
   const [isBackendConnected, setIsBackendConnected] = useState<boolean>(true);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
+  // Inspector & Benchmark state
+  const [streamInfo, setStreamInfo] = useState<StreamMetadata | null>(null);
+  const [inspectingStream, setInspectingStream] = useState<boolean>(false);
+  const [benchmarkedProxies, setBenchmarkedProxies] = useState<BenchmarkedProxy[]>([]);
+  const [isBenchmarking, setIsBenchmarking] = useState<boolean>(false);
+
   // Parse 11-char YouTube ID
   const extractVideoId = (raw: string): string => {
     if (!raw || !raw.trim()) return "";
@@ -101,6 +137,47 @@ export default function App() {
   };
 
   const currentVideoId = extractVideoId(streamInput);
+
+  // Inspect stream when target changes
+  useEffect(() => {
+    if (!currentVideoId) {
+      setStreamInfo(null);
+      return;
+    }
+    let active = true;
+    setInspectingStream(true);
+    fetch(`/api/stream/inspect?id=${currentVideoId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (active && data.success) {
+          setStreamInfo(data);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setInspectingStream(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentVideoId]);
+
+  // Sync benchmarked proxy table
+  useEffect(() => {
+    const fetchProxyTable = async () => {
+      try {
+        const res = await fetch("/api/proxy/table");
+        if (res.ok) {
+          const data = await res.json();
+          setBenchmarkedProxies(data.proxies || []);
+          setIsBenchmarking(data.is_running || false);
+        }
+      } catch (err) {}
+    };
+    fetchProxyTable();
+    const interval = setInterval(fetchProxyTable, 2500);
+    return () => clearInterval(interval);
+  }, []);
 
   // Auto-scroll terminal
   useEffect(() => {
@@ -240,6 +317,45 @@ export default function App() {
     }
   };
 
+  const handleRunBenchmark = async (limit = 15) => {
+    setIsBenchmarking(true);
+    addLocalLog(`⚡ Starting proxy benchmark scan (target: ${limit} live proxies)...`, "info");
+    try {
+      const res = await fetch("/api/proxy/benchmark", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit, source: "sitios.txt" }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        addLocalLog(`Benchmark note: ${data.message}`, "warning");
+      }
+    } catch (e: any) {
+      addLocalLog(`Failed to start benchmark: ${e.message}`, "danger");
+      setIsBenchmarking(false);
+    }
+  };
+
+  const handleUseProxy = (proxyStr: string) => {
+    setCustomProxies((prev) => {
+      const existing = prev ? prev.split("\n").map((p) => p.trim()) : [];
+      if (!existing.includes(proxyStr)) {
+        return existing.length > 0 ? `${prev}\n${proxyStr}` : proxyStr;
+      }
+      return prev;
+    });
+    setProxyMode("custom");
+    addLocalLog(`✔ Added ${proxyStr} to Custom Proxy routing.`, "info");
+  };
+
+  const handleImportAllProxies = () => {
+    if (benchmarkedProxies.length === 0) return;
+    const text = benchmarkedProxies.map((p) => p.proxy).join("\n");
+    setCustomProxies(text);
+    setProxyMode("custom");
+    addLocalLog(`✔ Imported ${benchmarkedProxies.length} verified low-latency proxies into Custom Routing!`, "success");
+  };
+
   const isRunning = status.status === "running";
   const isStarting = status.status === "starting";
   const isStopping = status.status === "stopping";
@@ -343,12 +459,12 @@ export default function App() {
                 </Button>
               </div>
 
-              {/* Dynamic Video Preview Card - Only rendered when ID is present */}
+              {/* Dynamic Video Preview Card - Stream Inspector */}
               {currentVideoId ? (
-                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 flex gap-3 items-center transition-all animate-in fade-in duration-300">
-                  <div className="relative h-16 w-24 rounded-lg overflow-hidden flex-shrink-0 bg-slate-900 border border-slate-800">
+                <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row gap-3.5 transition-all animate-in fade-in duration-300">
+                  <div className="relative h-20 w-32 rounded-lg overflow-hidden flex-shrink-0 bg-slate-900 border border-slate-800">
                     <img
-                      src={`https://img.youtube.com/vi/${currentVideoId}/hqdefault.jpg`}
+                      src={streamInfo?.thumbnail_url || `https://img.youtube.com/vi/${currentVideoId}/hqdefault.jpg`}
                       alt="Thumbnail"
                       className="h-full w-full object-cover"
                       onError={(e) => {
@@ -356,28 +472,52 @@ export default function App() {
                           "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&auto=format&fit=crop";
                       }}
                     />
-                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                      <div className="h-6 w-6 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">
-                        <Play className="h-3 w-3 text-white fill-white ml-0.5" />
+                    <div className="absolute inset-0 bg-black/25 flex items-center justify-center">
+                      <div className="h-7 w-7 rounded-full bg-rose-600/90 flex items-center justify-center shadow-lg">
+                        <Play className="h-3.5 w-3.5 text-white fill-white ml-0.5" />
                       </div>
                     </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <Badge className="bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[9px] px-1.5 py-0">
-                        LIVE READY
-                      </Badge>
-                      <span className="font-mono text-xs text-emerald-400 font-semibold">{currentVideoId}</span>
+                  <div className="flex-1 min-w-0 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {streamInfo?.is_live ? (
+                          <Badge className="bg-rose-500/20 text-rose-400 border border-rose-500/40 text-[9px] px-1.5 py-0 flex items-center gap-1 animate-pulse">
+                            <Radio className="h-2.5 w-2.5" /> LIVE BROADCAST
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-slate-800/90 text-slate-300 border border-slate-700 text-[9px] px-1.5 py-0">
+                            📹 RECORDED VIDEO
+                          </Badge>
+                        )}
+                        <span className="font-mono text-xs text-emerald-400 font-semibold">{currentVideoId}</span>
+                      </div>
+                      <h4 className="text-xs font-semibold text-slate-100 line-clamp-1 mt-1">
+                        {streamInfo?.title || (inspectingStream ? "Inspecting stream metadata..." : "YouTube Target Active")}
+                      </h4>
+                      {streamInfo?.author_name && (
+                        <p className="text-[11px] text-slate-400 truncate">
+                          Channel: <span className="text-cyan-400">{streamInfo.author_name}</span>
+                        </p>
+                      )}
                     </div>
-                    <p className="text-xs text-slate-300 truncate mt-1">YouTube Target Active</p>
-                    <a
-                      href={`https://www.youtube.com/watch?v=${currentVideoId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 mt-1 underline"
-                    >
-                      Open in YouTube <ExternalLink className="h-3 w-3 inline" />
-                    </a>
+                    <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-800/60 text-[11px]">
+                      <span className="text-slate-400 font-mono">
+                        {streamInfo?.live_viewers
+                          ? `👥 ${streamInfo.live_viewers.toLocaleString()} watching`
+                          : streamInfo?.views
+                          ? `👁️ ${streamInfo.views.toLocaleString()} views`
+                          : "Ready to stream"}
+                      </span>
+                      <a
+                        href={`https://www.youtube.com/watch?v=${currentVideoId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 underline"
+                      >
+                        Open <ExternalLink className="h-3 w-3 inline" />
+                      </a>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -483,7 +623,7 @@ export default function App() {
                     </Select>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Scrapes 118 proxy repositories from sitios.txt. Live progress will stream directly in the console.
+                    Scrapes 125+ verified proxy repositories from sitios.txt. Live progress will stream directly in the console.
                   </p>
                 </TabsContent>
 
@@ -750,6 +890,121 @@ export default function App() {
                   );
                 })}
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Proxy Health & Latency Radar Table */}
+          <Card className="bg-[#0e131d] border-slate-800/90 shadow-xl">
+            <CardHeader className="pb-3 border-b border-slate-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-200">
+                  <Globe className="h-4 w-4 text-cyan-400" />
+                  Proxy Health & Latency Radar
+                </CardTitle>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Pre-tested live proxies ranked by real round-trip ping to YouTube
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {benchmarkedProxies.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleImportAllProxies}
+                    className="h-7 text-xs bg-slate-900 border-slate-800 text-emerald-400 hover:bg-slate-800 flex items-center gap-1"
+                  >
+                    <ArrowDownToLine className="h-3 w-3" />
+                    Load All to Custom
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  onClick={() => handleRunBenchmark(15)}
+                  disabled={isBenchmarking}
+                  className="h-7 text-xs bg-cyan-600 hover:bg-cyan-500 text-white font-medium flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`h-3 w-3 ${isBenchmarking ? "animate-spin" : ""}`} />
+                  {isBenchmarking ? "Benchmarking..." : "Run Benchmark"}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-3">
+              {benchmarkedProxies.length === 0 ? (
+                <div className="py-8 text-center border border-dashed border-slate-800 rounded-lg bg-slate-950/40">
+                  <Globe className="h-6 w-6 text-slate-600 mx-auto mb-2" />
+                  <p className="text-xs text-slate-400 font-medium">No live benchmark data yet</p>
+                  <p className="text-[11px] text-slate-500 mt-1 max-w-sm mx-auto">
+                    Click "Run Benchmark" to scan candidates from 125+ sources and measure live round-trip latency.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-slate-800 overflow-hidden">
+                  <Table className="text-xs">
+                    <TableHeader className="bg-slate-950/80">
+                      <TableRow className="border-slate-800 hover:bg-transparent">
+                        <TableHead className="w-12 text-slate-400">Rank</TableHead>
+                        <TableHead className="text-slate-400">Proxy Endpoint</TableHead>
+                        <TableHead className="text-slate-400">Protocol</TableHead>
+                        <TableHead className="text-slate-400">Latency</TableHead>
+                        <TableHead className="text-slate-400">Grade</TableHead>
+                        <TableHead className="text-right text-slate-400">Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {benchmarkedProxies.slice(0, 10).map((p, idx) => (
+                        <TableRow key={idx} className="border-slate-800/60 hover:bg-slate-900/40">
+                          <TableCell className="font-mono text-slate-500">{idx + 1}</TableCell>
+                          <TableCell className="font-mono text-slate-200 font-medium">
+                            {p.proxy}
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-[10px] font-mono bg-slate-900 px-1.5 py-0.5 rounded text-slate-400 border border-slate-800">
+                              {p.protocol || "HTTP"}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={`font-mono text-[10px] ${
+                                p.latency_ms < 400
+                                  ? "bg-emerald-950/60 text-emerald-400 border-emerald-500/40"
+                                  : p.latency_ms < 900
+                                  ? "bg-amber-950/60 text-amber-400 border-amber-500/40"
+                                  : "bg-rose-950/60 text-rose-400 border-rose-500/40"
+                              }`}
+                            >
+                              {p.latency_ms} ms
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className={`text-[11px] font-medium ${
+                                p.grade === "Fast"
+                                  ? "text-emerald-400"
+                                  : p.grade === "Medium"
+                                  ? "text-amber-400"
+                                  : "text-rose-400"
+                              }`}
+                            >
+                              {p.grade}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleUseProxy(p.proxy)}
+                              className="h-6 text-[10px] text-cyan-400 hover:text-white hover:bg-slate-800 px-2"
+                            >
+                              Use
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
