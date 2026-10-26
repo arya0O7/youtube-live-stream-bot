@@ -117,7 +117,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [isBackendConnected, setIsBackendConnected] = useState<boolean>(true);
-  const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalContainerRef = useRef<HTMLDivElement>(null);
 
   // Inspector & Benchmark state
   const [streamInfo, setStreamInfo] = useState<StreamMetadata | null>(null);
@@ -179,10 +179,18 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-scroll terminal
+  // Keep page top on initial load/refresh
   useEffect(() => {
-    if (autoScroll && terminalEndRef.current) {
-      terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+    window.scrollTo(0, 0);
+  }, []);
+
+  // Auto-scroll terminal container ONLY (does NOT scroll the browser window)
+  useEffect(() => {
+    if (autoScroll && terminalContainerRef.current) {
+      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
     }
   }, [logs, autoScroll]);
 
@@ -813,7 +821,7 @@ export default function App() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="p-3 flex-1 overflow-y-auto font-mono text-xs space-y-1.5 bg-[#070a0f]">
+            <CardContent ref={terminalContainerRef} className="p-3 flex-1 overflow-y-auto font-mono text-xs space-y-1.5 bg-[#070a0f]">
               {logs.length === 0 ? (
                 <div className="text-slate-600 text-center py-10">
                   No telemetry events logged yet. Launch bot to start streaming events.
@@ -845,7 +853,6 @@ export default function App() {
                   );
                 })
               )}
-              <div ref={terminalEndRef} />
             </CardContent>
           </Card>
 
