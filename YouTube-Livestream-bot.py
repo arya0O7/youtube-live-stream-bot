@@ -14,6 +14,8 @@ import json
 import re
 import psutil
 import multiprocessing
+import tempfile
+import zipfile
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -368,6 +370,61 @@ class ProxyManager:
                 proxy = random.choice(self.proxies)
             return proxy
 
+def create_proxy_auth_extension(host, port, user, password):
+    manifest_json = """
+    {
+        "version": "1.0.0",
+        "manifest_version": 2,
+        "name": "Chrome Proxy Auth",
+        "permissions": [
+            "proxy",
+            "tabs",
+            "unlimitedStorage",
+            "storage",
+            "<all_urls>",
+            "webRequest",
+            "webRequestBlocking"
+        ],
+        "background": {
+            "scripts": ["background.js"]
+        },
+        "minimum_chrome_version": "22.0.0"
+    }
+    """
+    background_js = """
+    var config = {
+        mode: "fixed_servers",
+        rules: {
+            singleProxy: {
+                scheme: "http",
+                host: "%s",
+                port: parseInt(%s)
+            },
+            bypassList: ["localhost", "127.0.0.1"]
+        }
+    };
+    chrome.proxy.settings.set({value: config, scope: "regular"}, function() {});
+    function callbackFn(details) {
+        return {
+            authCredentials: {
+                username: "%s",
+                password: "%s"
+            }
+        };
+    }
+    chrome.webRequest.onAuthRequired.addListener(
+        callbackFn,
+        {urls: ["<all_urls>"]},
+        ['blocking']
+    );
+    """ % (host, port, user, password)
+
+    tmp = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
+    with zipfile.ZipFile(tmp.name, 'w') as zp:
+        zp.writestr('manifest.json', manifest_json)
+        zp.writestr('background.js', background_js)
+    return tmp.name
+
 class YouTubeBot:
     def __init__(self, lang='es'):
         self.proxy_manager = ProxyManager()
@@ -465,17 +522,36 @@ class YouTubeBot:
             options.add_argument('--disable-notifications')
             options.add_argument('--disable-popup-blocking')
             options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_argument('--disable-extensions')
             options.add_argument('--disable-infobars')
             options.add_argument('--disable-web-security')
             options.add_argument('--ignore-certificate-errors')
             options.add_argument('--ignore-ssl-errors')
             options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+
+            proxy_ext_file = None
             if proxy and str(proxy).strip().lower() != 'direct':
-                clean_p = str(proxy).strip()
-                if not clean_p.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
-                    clean_p = f'http://{clean_p}'
-                options.add_argument(f'--proxy-server={clean_p}')
+                raw_p = str(proxy).strip()
+                # Check for format 1: user:pass@host:port
+                m_auth = re.search(r'^(?:https?:\/\/)?([^:@]+):([^:@]+)@([a-zA-Z0-9_\-\.]+):(\d+)$', raw_p)
+                # Check for format 2: host:port:user:pass (Webshare default format)
+                m_auth_alt = re.search(r'^([a-zA-Z0-9_\-\.]+):(\d+):([^:@]+):([^:@]+)$', raw_p)
+
+                if m_auth:
+                    u, pw, h, pt = m_auth.group(1), m_auth.group(2), m_auth.group(3), m_auth.group(4)
+                    proxy_ext_file = create_proxy_auth_extension(h, pt, u, pw)
+                    options.add_extension(proxy_ext_file)
+                elif m_auth_alt:
+                    h, pt, u, pw = m_auth_alt.group(1), m_auth_alt.group(2), m_auth_alt.group(3), m_auth_alt.group(4)
+                    proxy_ext_file = create_proxy_auth_extension(h, pt, u, pw)
+                    options.add_extension(proxy_ext_file)
+                else:
+                    options.add_argument('--disable-extensions')
+                    clean_p = raw_p
+                    if not clean_p.startswith(('http://', 'https://', 'socks4://', 'socks5://')):
+                        clean_p = f'http://{clean_p}'
+                    options.add_argument(f'--proxy-server={clean_p}')
+            else:
+                options.add_argument('--disable-extensions')
             
             # Agregar más argumentos para evadir la detección
             options.add_argument('--disable-blink-features')
@@ -617,6 +693,11 @@ class YouTubeBot:
                         driver.quit()
                     except:
                         pass
+                    if proxy_ext_file and os.path.exists(proxy_ext_file):
+                        try:
+                            os.unlink(proxy_ext_file)
+                        except Exception:
+                            pass
                     self.release_window_slot()
 
             except Exception as e:
