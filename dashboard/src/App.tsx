@@ -642,50 +642,6 @@ export default function App() {
             </Card>
           </div>
 
-          {/* Worker Matrix Radar */}
-          <Card className="bg-[#0e131d] border-slate-800/90 shadow-xl">
-            <CardHeader className="pb-3 border-b border-slate-800/60 flex flex-row items-center justify-between">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-200">
-                <Activity className="h-4 w-4 text-emerald-400" />
-                Worker Cluster Radar
-              </CardTitle>
-              <Badge variant="outline" className="text-[10px] font-mono text-slate-400">
-                {status.active_windows} / {status.max_windows || windows} Online
-              </Badge>
-            </CardHeader>
-            <CardContent className="pt-4">
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                {Array.from({ length: status.max_windows || windows }).map((_, i) => {
-                  const isActive = i < status.active_windows;
-                  return (
-                    <div
-                      key={i}
-                      className={`p-2.5 rounded-lg border text-center transition-all ${
-                        isActive
-                          ? "bg-emerald-950/20 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.1)]"
-                          : "bg-slate-950/40 border-slate-800/60 opacity-60"
-                      }`}
-                    >
-                      <div className="flex items-center justify-center gap-1.5 mb-1">
-                        <span
-                          className={`h-2 w-2 rounded-full ${
-                            isActive ? "bg-emerald-400 animate-ping" : "bg-slate-600"
-                          }`}
-                        />
-                        <span className="text-[11px] font-mono font-bold text-slate-300">
-                          W-{i + 1}
-                        </span>
-                      </div>
-                      <div className="text-[10px] font-mono text-slate-400">
-                        {isActive ? "Streaming" : "Standby"}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Live Telemetry Terminal */}
           <Card className="bg-[#070a0f] border-slate-800/90 shadow-2xl flex flex-col h-[380px]">
             <CardHeader className="py-2.5 px-4 border-b border-slate-800 flex flex-row items-center justify-between bg-slate-950">
@@ -750,6 +706,50 @@ export default function App() {
                 })
               )}
               <div ref={terminalEndRef} />
+            </CardContent>
+          </Card>
+
+          {/* Worker Matrix Radar */}
+          <Card className="bg-[#0e131d] border-slate-800/90 shadow-xl">
+            <CardHeader className="pb-3 border-b border-slate-800/60 flex flex-row items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-200">
+                <Activity className="h-4 w-4 text-emerald-400" />
+                Worker Cluster Radar
+              </CardTitle>
+              <Badge variant="outline" className="text-[10px] font-mono text-slate-400">
+                {status.active_windows} / {status.max_windows || windows} Online
+              </Badge>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                {Array.from({ length: status.max_windows || windows }).map((_, i) => {
+                  const isActive = i < status.active_windows;
+                  return (
+                    <div
+                      key={i}
+                      className={`p-2.5 rounded-lg border text-center transition-all ${
+                        isActive
+                          ? "bg-emerald-950/20 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.1)]"
+                          : "bg-slate-950/40 border-slate-800/60 opacity-60"
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-1.5 mb-1">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            isActive ? "bg-emerald-400 animate-ping" : "bg-slate-600"
+                          }`}
+                        />
+                        <span className="text-[11px] font-mono font-bold text-slate-300">
+                          W-{i + 1}
+                        </span>
+                      </div>
+                      <div className="text-[10px] font-mono text-slate-400">
+                        {isActive ? "Streaming" : "Standby"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </CardContent>
           </Card>
         </div>
